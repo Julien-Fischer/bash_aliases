@@ -1,6 +1,13 @@
 # This file is licensed under the MIT License.
 # See the LICENSE file in the project root for more information:
-# https://github.com/Julien-Fischer/bash_aliases/blob/master/LICENSE
+# https://github.com/Julien-Fischer/linx/blob/master/LICENSE
+
+# Source linx
+if [ -f ~/.linx_lib.sh ]; then
+    source "${HOME}"/.linx_lib.sh
+fi
+
+#source "${HOME}/.linx_lib.sh"
 
 ##############################################################
 # Config
@@ -11,6 +18,10 @@ export PROMPT_TO_BOTTOM=1
 ##############################################################
 # Misc
 ##############################################################
+
+datetime() {
+    timestamp
+}
 
 # @description A command line calculator
 # @param $1 a mathematical expression
@@ -56,7 +67,15 @@ typeof() {
 ask() {
     local input="$1"
     local query="${input// /%20}"
-    firefox "https://www.perplexity.ai/search?q=$query" && disown
+    firefox "https://www.perplexity.ai/search?q=${query}" && disown
+}
+
+# @description Search keywords with Firefox default search engine
+# @param $1 the keywords to lookup
+# @example
+#   ask "Debian 13 release date"
+search() {
+    firefox -search "${1}"
 }
 
 ##############################################################
@@ -70,6 +89,13 @@ function ll {
     ls "${dir}" -lhAF
 }
 
+# display the content of the specified directory using short format,
+# sort by alphabetical order, grouping directories first
+la() {
+    local dir="${1:-.}"
+    ls "${dir}" -AF --group-directories-first
+}
+
 # display the content of the specified directory using long format,
 # sort by alphabetical order, grouping directories first
 ld() {
@@ -78,18 +104,12 @@ ld() {
 }
 
 # display the content of the specified directory using short format,
-# sort by alphabetical order, grouping directories first
-la() {
-    local dir="${1:-.}"
-    ls "${dir}" -AF --group-directories-first
-}
-
-# display the content of the specified directory using short format,
 # sort by modification time
 lt() {
     local dir="${1:-.}"
-    ls -lhtAF -1 "${dir}"
+    ls "${dir}" -lhAFt -1
 }
+
 alias ls='ls --color=auto'
 
 ##############################################################
@@ -145,101 +165,95 @@ pp() {
 
 alias reload='source ~/.bashrc && clear'
 alias br='vim ~/.bashrc'
-alias ba='vim ~/.bash_aliases.sh'
+alias ba='vim ~/linx.sh'
 alias obr='open ~/.bashrc & disown'
-alias oba='open ~/.bash_aliases.sh & disown'
+alias oba='open ~/linx.sh & disown'
 
-# @description resync profiles and functions/aliases from the remote
-# @param $1 (optional) the settings to synchronize
-# @return 0 if the settings synchronized successfully; 1 otherwise
+# @description Synchronizes the local linx installation with the latest version from the remote
+# @return 0 if the configuration was synchronized successfully; 1 otherwise
+synx() {
+    install_core
+}
+
+# @description Prompts the user for approval
+# @param $1 The action to be confirmed
+# @param $2 The prompt message for the user
+# @return 0 if user confirms, 1 otherwise
 # @example
-#   resync
-#   resync aliases
-#   resync profiles
-resync() {
-    local param="${1}"
-    if [[ "$#" -eq 0 || "${param}" == "aliases" ]]; then
-        upgrade_aliases
-        return $?
-    fi
-    if [[ "$#" -eq 0 || "${param}" == "profiles" ]]; then
-        upgrade_profiles
-        return $?
-    fi
-    return 0
+#  # Abort on anything other than y or yes (case insensitive)
+#  prompt "Installation" "Proceed?" --abort
+#
+#  # Use return status
+#  if [[ prompt "Installation" "Proceed?"]]; then
+#    # on abort
+#  else
+#    # on confirm...
+#  fi
+function prompt() {
+    confirm "$@"
 }
 
-# @description Install the latest version of .bash_aliases.sh from the remote repository
-upgrade_aliases() {
-    local DIRNAME="bash_aliases"
-    local REPOSITORY="https://github.com/Julien-Fischer/${DIRNAME}"
-    if [[ -d "${DIRNAME}" ]]; then
-        echo "${DIRNAME} already exists in this directory."
-        return 1
-    fi
-    if git clone "${REPOSITORY}"; then
-        cp ~/.bash_aliases.sh ~/.bash_aliases.bak
-        cp "${DIRNAME}/.bash_aliases.sh" ~
-        rm -rf "${DIRNAME}"
-        reload
-        echo "Upgrade successful."
-    else
-        echo "Upgrade failed"
-    fi
-}
-
-# @description Install the latest version of terminator_config from the remote repository
-upgrade_profiles() {
-    local DIRNAME="terminator_config"
-    local REPOSITORY="https://github.com/julien-fischer-config/${DIRNAME}"
-    if [[ -d "${DIRNAME}" ]]; then
-        echo "${DIRNAME} already exists in this directory."
-        return 1
-    fi
-    if git clone "${REPOSITORY}"; then
-        rm -rf "${DIRNAME}"
-        reload
-        echo "Upgrade successful."
-    else
-        echo "Upgrade failed"
-    fi
-}
-
-# @description manages Terminator terminal profiles. This function assumes that a $TPROFILES env variable is defined (typically in ~\.bashrc)
+# @description Switch to a specified Terminator profile. If no parameter is provided, list the available profiles
 # @param $1  (optional) the profile to switch to
 # @example
 #   # List available profiles
-#   tprofile
-#   # Switch to the speci²fied profile
-#   tprofile profile_name
-tprofile() {
-    local CONFIG_DIR=~/.config/terminator/config
-    local extension=".profile"
-    local project_root="${TPROFILES}"
-    local path="${project_root}/profiles"
-    local name="${1}"
-    local file="${path}/${name}${extension}"
-    if [[ -z "${name}" ]]; then
-        echo "Available profiles:"
-        names=$(la "${path}")
-        result="${names//$extension}"
-        echo "${result}"
+#   profiles
+#   # Switch to the specified profile
+#   profiles profile_name
+profiles() {
+    local profile_name="${1}"
+    if [[ -z "${profile_name}" ]]; then
+        list_profiles
+        return 0
+    fi
+    local styles=$(print_profile "${profile_name}")
+    if [[ -z "${styles}" ]]; then
+        echo "${profile_name} profile not found."
         return 1
     fi
-    if [[ ! -f "${file}" ]]; then
-        echo "${file} profile not found."
-        return 1
-    fi
-    cp "${file}" "${CONFIG_DIR}"
-    echo "${name}" > "${project_root}/CURRENT_PROFILE"
-    reload
-    echo "Switched to ${name} profile."
+
+    local temp_file=$(mktemp)
+    local in_default_profile=false
+    local in_profiles=false
+
+    while IFS= read -r line; do
+       if [[ "${line}" == "[profiles]" ]]; then
+            in_profiles=true
+        elif [[ $in_profiles == true && "${line}" =~ ^\[[^]]*\]$ && "${line}" != "[profiles]" ]]; then
+            in_profiles=false
+            in_default_profile=false
+        fi
+
+        if [[ $in_profiles == true && "${line}" == "  [[default]]" ]]; then
+            in_default_profile=true
+            echo "${line}" >> "$temp_file"
+            echo "${styles}" >> "${temp_file}"
+        elif [[ $in_default_profile == true && "${line}" =~ ^[[:space:]]*\[\[ ]]; then
+            in_default_profile=false
+            echo "${line}" >> "$temp_file"
+        elif [[ $in_default_profile == true && "${line}" =~ ^[[:space:]]+[a-zA-Z_]+[[:space:]]*= ]]; then
+            continue
+        else
+            echo "${line}" >> "$temp_file"
+        fi
+    done < "${TERMINATOR_CONFIG_FILE}"
+
+    backup "${TERMINATOR_CONFIG_FILE}"
+    sudo mv "$temp_file" "${TERMINATOR_CONFIG_FILE}"
+    touch "${TERMINATOR_DIR}/current.profile"
+    echo "${profile_name}" > "${CURRENT_THEME_FILE}"
+    echo "Switched to ${profile_name} profile. Restart Terminator to apply the theme."
 }
 
+# @description Although this function could be invoked directly, it is usually executed via the profiles function
+# @example
+#  # The following function calls are strictly equivalent:
+#  profiles
+#  print_profile
 list_profiles() {
-    local CONFIG_FILE="$HOME/.config/terminator/config"
-    if [[ ! -f "${CONFIG_FILE}" ]]; then
-        echo "Configuration file not found at ${CONFIG_FILE}"
+    if [[ ! -f "${TERMINATOR_CONFIG_FILE}" ]]; then
+        echo "Configuration file not found at ${TERMINATOR_CONFIG_FILE}"
+        return 1
     fi
     local reading_profiles=1
     local profiles=()
@@ -254,28 +268,37 @@ list_profiles() {
         if [[ $reading_profiles -eq 0 && "${line}" =~ \[\[([^\]]+)\]\] ]]; then
             profiles+=("${BASH_REMATCH[1]}")
         fi
-    done < "${CONFIG_FILE}"
-    echo "${#profiles[@]} profiles:"
+    done < "${TERMINATOR_CONFIG_FILE}"
+    echo "${#profiles[@]} available profiles:"
+    local current_theme=
+    if [[ -f "${CURRENT_THEME_FILE}" ]]; then
+        current_theme=$(cat "${CURRENT_THEME_FILE}")
+    fi
     for profile in "${profiles[@]}"; do
-        echo "- ${profile}"
+        if [[ -n "${current_theme}" && "${profile}" == "${current_theme}" ]]; then
+            echo -e "\033[31m> ${profile}\033[0m"
+        else
+            echo "- ${profile}"
+        fi
     done
 }
 
 print_profile() {
     local profile_name="${1}"
-    local CONFIG_FILE="$HOME/.config/terminator/config"
-    if [[ ! -f "${CONFIG_FILE}" ]]; then
-        echo "Configuration file not found at ${CONFIG_FILE}"
+    if [[ ! -f "${TERMINATOR_CONFIG_FILE}" ]]; then
+        echo "Configuration file not found at ${TERMINATOR_CONFIG_FILE}"
+        return 1
     fi
     local reading_profiles=1
     local reading_target_profile=1
     local styles=()
+    local style_string=""
     while IFS= read -r line; do
         if [[ "${line}" == "[profiles]" ]]; then
             reading_profiles=0
             continue
         fi
-        if [[ $reading_profiles -eq 0 && "${line}" =~ \[\[[^\]]+\]\] ]]; then
+        if [[ $reading_profiles -eq 0 && "${line}" =~ \[?\[[^\]]+\]\]? ]]; then
             if [[ "${line}" =~ [[:space:]]*\[${profile_name}\][[:space:]]* ]]; then
                 reading_target_profile=0
             elif [[ $reading_target_profile -eq 0 ]]; then
@@ -286,13 +309,19 @@ print_profile() {
         if [[ $reading_target_profile -eq 0  ]]; then
             styles+=("${line}")
         fi
-    done < "${CONFIG_FILE}"
+    done < "${TERMINATOR_CONFIG_FILE}"
     if [[ "${#styles[@]}" -gt 0 ]]; then
-        for style in "${styles[@]}"; do
-            echo "${style}"
+        for i in "${!styles[@]}"; do
+            if [ $i -eq $((${#styles[@]} - 1)) ]; then
+                style_string+="${styles[i]}"
+            else
+                style_string+="${styles[i]}\n"
+            fi
         done
+        echo -e "${style_string}"
     else
-        echo -e "\033[31mE:\033[0m Could not find profile ${profile_name} in ${CONFIG_FILE}."
+        echo -e "\033[31mE:\033[0m Could not find profile ${profile_name} in ${TERMINATOR_CONFIG_FILE}."
+        return 1
     fi
 }
 
@@ -386,9 +415,8 @@ alias update='sudo apt update'
 alias upgrades='sudo apt update && apt list --upgradable'
 alias upgrade='sudo apt update && sudo apt upgrade'
 alias sup='sudo apt update && sudo apt upgrade -y && autorem'
-alias install='sudo apt install'
+alias install.sh='sudo apt install.sh'
 alias remove='sudo apt remove'
-alias search='apt search'
 alias pls='sudo'
 
 # Execute the last command with sudo
@@ -398,20 +426,12 @@ please() {
 
 # @description Determines whether a software is installed on this system
 # @param $1 the software name
+# @param $2 0 if there should be not output for non-installed software
 # @return 0 if the software is installed; 1 otherwise
-# @example
 #   is_installed firefox
+# @example
 is_installed() {
-    local software="${1}"
-    local quiet="${2:-1}"
-    if dpkg -l | grep -qw "${software}"; then
-        local location=$(which "${software}")
-        echo "${software} is installed at ${location}"
-        return 0
-    else
-        [[ ! $quiet ]] && echo "${software} is not installed."
-        return 1
-    fi
+    return $(installed "$@")
 }
 
 # @description Upgrades the specified software to the latest version
@@ -427,17 +447,28 @@ upgrade_only() {
         apt search "${software}"
         return 1
     fi
-    sudo apt update && sudo apt install --only-upgrade "${software}"
+    sudo apt update && sudo apt install.sh --only-upgrade "${software}"
 }
 
 ##############################################################
 # Git
 ##############################################################
-
+# Traditional git log
 alias gl='git log'
+# Git log (one-line)
 alias glo='git log --oneline'
+# Git log (time)
 alias glot='git log --pretty=format:"%C(yellow)%h%C(reset) %C(red)%ad%C(reset) %C(cyan)%an%C(reset) %s" --date=format:"%Y-%m-%d %H:%M" --abbrev-commit'
+# Git log (releases)
+alias glor='git log --no-walk --tags --pretty=format:"%C(yellow)%h%C(reset) %C(red)%ad%C(reset) %C(green)%d%C(reset) %C(cyan)%an%C(reset) %s" --date=format:"%Y-%m-%d %H:%M" --abbrev-commit'
+# Git log (tree)
+alias gtree='git log --oneline --graph --decorate'
+# Git log (tree all)
+alias gtree_all='gtree --all'
+
+# Traditional git status
 alias gs='git status'
+# Git updates
 alias ga='git add .'
 alias gc='git commit -m' # <message>
 alias gp='git push'
@@ -447,8 +478,6 @@ alias gac='git add . && git commit -m' # <message>
 gap() {
   gac "${1}" && gp
 }
-alias gtree='git log --oneline --graph --decorate'
-alias gtree_all='gtree --all'
 alias gstash='git add . && git stash'
 # Permanently remove old, unreferenced commits
 # /!\ Be cautious when using this command, as it permanently removes commits from your repository.
