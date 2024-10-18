@@ -1,0 +1,10 @@
+# Override the default desktop location:
+# DESK="${HOME}/Desktop"
+
+# Define the directory containing your programming projets:
+PROG="${HOME}/programming"
+
+# Source linx
+if [ -f ~/linx.sh ]; then
+    source "${HOME}"/linx.sh
+fi
